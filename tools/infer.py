@@ -21,6 +21,14 @@ from PIL import Image
 from reprod_log import ReprodLogger
 from preprocess_ops import ResizeImage, CenterCropImage, NormalizeImage, ToCHW, Compose
 
+import sys
+__dir__ = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.abspath(os.path.join(__dir__, '../')))
+
+from config import get_config
+from config import update_config
+from pit import build_pit as build_model
+from datasets import get_val_transforms
 
 class InferenceEngine(object):
     """InferenceEngine
@@ -44,21 +52,6 @@ class InferenceEngine(object):
             os.path.join(args.model_dir, "inference.pdmodel"),
             os.path.join(args.model_dir, "inference.pdiparams"))
 
-        # build transforms
-        self.transforms = Compose([
-            ResizeImage(args.resize_size), CenterCropImage(args.crop_size),
-            NormalizeImage(), ToCHW()
-        ])
-
-        # wamrup
-        if self.args.warmup > 0:
-            for idx in range(args.warmup):
-                print(idx)
-                x = np.random.rand(1, 3, self.args.crop_size,
-                                   self.args.crop_size).astype("float32")
-                self.input_tensor.copy_from_cpu(x)
-                self.predictor.run()
-                self.output_tensor.copy_to_cpu()
         return
 
     def load_predictor(self, model_file_path, params_file_path):
@@ -101,7 +94,7 @@ class InferenceEngine(object):
 
         return predictor, config, input_tensor, output_tensor
 
-    def preprocess(self, img_path):
+    def preprocess(self, img_path, config):
         """preprocess
 
         Preprocess to the input.
@@ -111,10 +104,13 @@ class InferenceEngine(object):
 
         Returns: Input data after preprocess.
         """
+        eval_transforms = get_val_transforms(config)
         with open(img_path, "rb") as f:
             img = Image.open(f)
             img = img.convert("RGB")
-        img = self.transforms(img)
+        img = eval_transforms(img)
+        # img = self.transforms(img)
+        img = img.numpy()
         img = np.expand_dims(img, axis=0)
         return img
 
@@ -161,18 +157,33 @@ def get_args(add_help=True):
     parser = argparse.ArgumentParser(
         description="PaddlePaddle Classification Training", add_help=add_help)
 
+    parser.add_argument('-cfg', type=str, default='configs/pit_ti.yaml')
+    parser.add_argument('-dataset', type=str, default=None)
+    parser.add_argument('-batch_size', type=int, default=1)
+    parser.add_argument('-image_size', type=int, default=None)
+    parser.add_argument('-data_path', type=str, default=None)
+    parser.add_argument('-save_path', type=str, default=None)
+    parser.add_argument('-ngpus', type=int, default=None)
+    parser.add_argument('-resume', type=str, default=None)
+    parser.add_argument('-last_epoch', type=int, default=None)
+    parser.add_argument('-teacher_model', type=str, default=None)
+    parser.add_argument('-eval', action='store_true')
+    parser.add_argument('-amp', action='store_true')
+    parser.add_argument('-pretrained', type=str, default=None)
+    parser.add_argument('-img_path', type=str, default='images/ILSVRC2012_val_00004506.JPEG')
+
     parser.add_argument(
         "--model-dir", default='./infer', help="inference model dir")
     parser.add_argument(
         "--use-gpu", default=False, type=str2bool, help="use_gpu")
     parser.add_argument(
         "--max-batch-size", default=16, type=int, help="max_batch_size")
-    parser.add_argument("--batch-size", default=1, type=int, help="batch size")
+    # parser.add_argument("--batch-size", default=1, type=int, help="batch size")
 
     parser.add_argument(
         "--resize-size", default=256, type=int, help="resize_size")
     parser.add_argument("--crop-size", default=224, type=int, help="crop_szie")
-    parser.add_argument("--img-path", default="images/ILSVRC2012_val_00004506.JPEG")
+    # parser.add_argument("--img-path", default="images/ILSVRC2012_val_00004506.JPEG")
 
     parser.add_argument(
         "--benchmark", default=False, type=str2bool, help="benchmark")
@@ -210,9 +221,12 @@ def infer_main(args):
     # enable benchmark
     if args.benchmark:
         autolog.times.start()
+    
+    config = get_config()
+    config = update_config(config, args)
 
     # preprocess
-    img = inference_engine.preprocess(args.img_path)
+    img = inference_engine.preprocess(args.img_path, config)
 
     if args.benchmark:
         autolog.times.stamp()
