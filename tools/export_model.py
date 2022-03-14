@@ -43,6 +43,7 @@ def get_arguments():
 def main(config):
     # define model
     model = build_model(config)
+#    model = nn.Sequential(model, nn.Softmax(axis=-1))
     model.eval()
 
     # load weights
@@ -51,6 +52,7 @@ def main(config):
     assert os.path.isfile(config.MODEL.PRETRAINED + '.pdparams') is True
     model_state = paddle.load(config.MODEL.PRETRAINED+'.pdparams')
     model.set_dict(model_state)
+    model = nn.Sequential(model, nn.Softmax(axis=-1))
     print(f"----- Pretrained: Load model state from {config.MODEL.PRETRAINED}")
 
     # decorate model with jit.save
